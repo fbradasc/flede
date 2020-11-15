@@ -1,0 +1,184 @@
+diff --git a/data/menu/ede-applications.menu b/data/menu/ede-applications.menu
+index f94e333..0fbce00 100644
+--- a/data/menu/ede-applications.menu
++++ b/data/menu/ede-applications.menu
+@@ -7,6 +7,9 @@
+     <DefaultAppDirs/>
+     <DefaultDirectoryDirs/>
+     
++    <!-- Read in overrides and child menus from applications-merged/ -->
++    <DefaultMergeDirs/>
++
+     <Include>
+         <Category>X-EDE-Toplevel</Category>
+     </Include>
+diff --git a/data/startede.in b/data/startede.in
+index 2f9ff8d..1b32201 100644
+--- a/data/startede.in
++++ b/data/startede.in
+@@ -13,6 +13,39 @@
+ # Details about XDG_XXX data and how they are set is at:
+ # http://standards.freedesktop.org/basedir-spec/basedir-spec-0.6.html
+ 
++add_XDG_CONFIG_DIRS() {
++    if [ ! -d "${1}" ]
++    then
++        return
++    fi
++
++    echo ${XDG_CONFIG_DIRS} | sed 's/:/\n/g' | grep "^${1}\$" >& /dev/null
++
++    if [ $? -ne 0 ]
++    then
++        export XDG_CONFIG_DIRS=${1}:${XDG_CONFIG_DIRS}
++    fi
++}
++
++add_XDG_DATA_DIRS() {
++    if [ ! -d "${1}" ]
++    then
++        return
++    fi
++
++    echo ${XDG_DATA_DIRS} | sed 's/:/\n/g' | grep "^${1}\$" >& /dev/null
++
++    if [ $? -ne 0 ]
++    then
++        export XDG_DATA_DIRS=${1}:${XDG_DATA_DIRS}
++    fi
++}
++
++unset XDG_DATA_HOME
++unset XDG_CONFIG_HOME
++unset XDG_CACHE_HOME
++unset XDG_MENU_PREFIX
++
+ PREFIX="@prefix@"
+ SYSCONFDIR="@my_sysconfdir@"
+ 
+@@ -28,13 +61,11 @@ if [ "x$XDG_CACHE_HOME" = "x" ]; then
+ 	XDG_CACHE_HOME="$HOME/.cache"
+ fi
+ 
+-if [ "x$XDG_DATA_DIRS" = "x" ]; then
+-	XDG_DATA_DIRS="/usr/local/share:/usr/share:$PREFIX/share"
+-fi
++add_XDG_DATA_DIRS "/usr/local/share"
++add_XDG_DATA_DIRS "/usr/share"
++add_XDG_DATA_DIRS "$PREFIX/share"
+ 
+-if [ "x$XDG_CONFIG_DIRS" = "x" ]; then
+-	XDG_CONFIG_DIRS="$SYSCONFDIR/xdg"
+-fi
++add_XDG_CONFIG_DIRS "$SYSCONFDIR/xdg"
+ 
+ # prefix for applications.menu
+ if [ "x$XDG_MENU_PREFIX" = "x" ]; then
+diff --git a/ede-panel/applets/start-menu/XdgMenuReader.cpp b/ede-panel/applets/start-menu/XdgMenuReader.cpp
+index 1ee32ae..8a32a53 100644
+--- a/ede-panel/applets/start-menu/XdgMenuReader.cpp
++++ b/ede-panel/applets/start-menu/XdgMenuReader.cpp
+@@ -120,6 +120,10 @@ struct MenuContext {
+ 	MenuContextList submenus;
+ };
+ 
++static void scan_menu_tag(TiXmlNode *elem, MenuParseList &parse_list);
++static void menu_parse_context_list_to_menu_context_list(MenuParseList &parse_list, 
++														 MenuContextList &ret);
++
+ /* TODO: bug in edelib */
+ static bool menu_context_sorter(MenuContext* const& c1, MenuContext* const& c2) {
+ 	return *(c1->name) < *(c2->name);
+@@ -181,6 +185,68 @@ static void menu_parse_context_append_default_dir_dirs(MenuParseContext *ctx) {
+ 		ctx->dir_dirs.push_back(build_filename((*it).c_str(), "desktop-directories"));
+ }
+ 
++static void menu_parse_context_append_applications_merged(MenuParseContext *ctx, const char *dir, const char *basedir) {
++	DIR *ds = opendir(dir);
++	if(!ds){
++		return;
++    }
++
++	dirent       *dp;
++	DesktopEntry *entry;
++
++	while((dp = readdir(ds)) != NULL) {
++		/* skip dots and (possibly) hidden files */
++		if(dp->d_name[0] == '.' || DOT_OR_DOTDOT(dp->d_name))
++			continue;
++
++		entry = new DesktopEntry;
++		entry->assign_path(dir, dp->d_name, basedir);
++
++		if(file_test(entry->get_path(), FILE_TEST_IS_DIR)) {
++			/* recurse if needed; the spec said we must */
++			menu_parse_context_append_applications_merged(ctx, entry->get_path(), basedir);
++
++			/* delete it */
++			delete entry;
++			continue;
++		}
++
++		/* files must ends with this extension */
++		if(str_ends(entry->get_path(), ".menu")) {
++            TiXmlDocument doc;
++            if(doc.LoadFile(entry->get_path())) {
++                TiXmlNode *elem = doc.FirstChild("Menu");
++
++                /* parse XML file */
++                scan_menu_tag(elem, ctx->submenus);
++            }
++		}
++
++        delete entry;
++	}
++
++	closedir(ds);
++}
++
++static void menu_parse_context_append_default_merged_dirs(MenuParseContext *ctx) {
++	StrList lst;
++
++	int ret = system_config_dirs(lst);
++	if(ret < 1){
++		return;
++    }
++
++	String    tmp;
++	StrListIt it = lst.begin(), it_end = lst.end();
++
++	for(; it != it_end; ++it) {
++		tmp = build_filename((*it).c_str(), "menus/applications-merged");
++
++        menu_parse_context_append_applications_merged(ctx, tmp.c_str(), tmp.c_str());
++	}
++
++}
++
+ static void menu_parse_context_append_desktop_files(MenuParseContext *ctx, const char *dir, const char *basedir) {
+ 	DIR *ds = opendir(dir);
+ 	if(!ds)
+@@ -285,6 +351,7 @@ static void scan_menu_tag(TiXmlNode *elem, MenuParseList &parse_list) {
+ 
+ 	TiXmlText *txt;
+ 	bool got_default_app_dirs = false, got_default_dir_dirs = false;
++	bool got_default_merged_dirs = false;
+ 
+ 	MenuParseContext *ctx = menu_parse_context_new();
+ 
+@@ -350,6 +417,15 @@ static void scan_menu_tag(TiXmlNode *elem, MenuParseList &parse_list) {
+ 			continue;
+ 		}
+ 
++		if(ELEMENT_IS(elem, "DefaultMergeDirs")) {
++			if(!got_default_merged_dirs) {
++				menu_parse_context_append_default_merged_dirs(ctx);
++				got_default_merged_dirs = true;
++			}
++
++			continue;
++		}
++
+ 		if(ELEMENT_IS(elem, "Include")) {
+ 			scan_include_exclude_tag(elem, ctx->include_rules);
+ 			continue;

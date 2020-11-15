@@ -1,0 +1,27 @@
+diff --git a/CMake/variables.cmake b/CMake/variables.cmake
+index d20964201..6f178a298 100644
+--- a/CMake/variables.cmake
++++ b/CMake/variables.cmake
+@@ -77,5 +77,5 @@ set(LIBS ${LINK_LIBS})
+ if (${CMAKE_SYSTEM_NAME} STREQUAL "AIX")
+     set(SHAREDSUFFIX "_s")
+ else ()
+-    set(SHAREDSUFFIX "")
++    set(SHAREDSUFFIX "_SHARED")
+ endif (${CMAKE_SYSTEM_NAME} STREQUAL "AIX")
+diff --git a/fltk-config.in b/fltk-config.in
+index a85c9a6cb..72ac0e25b 100644
+--- a/fltk-config.in
++++ b/fltk-config.in
+@@ -350,9 +350,9 @@ if test "$echo_ldflags" = "yes"; then
+     for i in $LDLIBS ; do
+ 	if test $i != -L$libdir ; then
+ 	    if test -z "$my_libs" ; then
+-		my_libs="$i"
++		my_libs="${i}"
+ 	    else
+-		my_libs="$my_libs $i"
++		my_libs="$my_libs ${i}"
+ 	    fi
+ 	fi
+     done

@@ -1,0 +1,29 @@
+diff --git a/m4/fltk.m4 b/m4/fltk.m4
+index c3b64b9..ad2573e 100644
+--- a/m4/fltk.m4
++++ b/m4/fltk.m4
+@@ -39,6 +39,11 @@ AC_DEFUN([EDELIB_FLTK], [
+ 			HAVE_FL_TREE=1
+ 			AC_MSG_RESULT(yes)
+ 			;;
++			dnl check for FLTK 1.4.x branch
++			["1.4."[0123456789]])
++			HAVE_FL_TREE=1
++			AC_MSG_RESULT(yes)
++			;;
+ 			*)
+ 			AC_MSG_ERROR([Looks like you have an older FLTK version ($fltk_version). Required is >= 1.1.7])
+ 		esac
+diff --git a/src/IconTheme.cpp b/src/IconTheme.cpp
+index 571ac8e..dc5604a 100644
+--- a/src/IconTheme.cpp
++++ b/src/IconTheme.cpp
+@@ -302,7 +302,7 @@ void IconTheme::clear(void) {
+ 
+ String IconTheme::find_icon(const char* icon, IconSizes sz, IconContext ctx) {
+ 	E_ASSERT(priv != NULL && "Did you call load() before this function?");
+-	E_RETURN_VAL_IF_FAIL(priv->dirlist.size() > 0, "");
++	E_RETURN_VAL_IF_FAIL((priv->dirlist.size() > 0) || (priv->theme_dirs.size() > 0), "");
+ 
+ 	String ret; ret.reserve(64);
+ 	bool has_extension = false;

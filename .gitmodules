@@ -1,0 +1,13 @@
+[submodule "ede"]
+	path = ede
+	url = https://github.com/edeproject/ede.git
+[submodule "edelib"]
+	path = edelib
+	url = https://github.com/edeproject/edelib.git
+[submodule "jam"]
+	path = jam
+	url = https://github.com/edeproject/jam.git
+[submodule "fltk"]
+	path = fltk
+	url = https://github.com/fltk/fltk.git
+	branch = branch-1.3
