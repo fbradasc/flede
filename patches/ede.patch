@@ -1,3 +1,27 @@
+diff --git a/build/Svg.jam b/build/Svg.jam
+index f33b277..f9a50e7 100644
+--- a/build/Svg.jam
++++ b/build/Svg.jam
+@@ -8,7 +8,8 @@
+ # GNU General Public License version 2 or newer.
+ # See COPYING for details.
+ 
+-SVG_CONVERTOR = "rsvg-convert" ;
++# SVG_CONVERTOR = "rsvg-convert" ;
++SVG_CONVERTOR = "convert" ;
+ 
+ # SvgToPng [target-png] : [source-svg] : [width] : [height] ;
+ rule SvgToPng
+@@ -69,7 +70,8 @@ rule SvgToPngDirectory
+ 
+ actions SvgToPng1
+ {
+-	$(SVG_CONVERTOR) -w $(PNG_WIDTH) -h $(PNG_HEIGHT) -f png "$(>)" "$(<)"
++    # $(SVG_CONVERTOR) -w $(PNG_WIDTH) -h $(PNG_HEIGHT) -f png "$(>)" "$(<)"
++    $(SVG_CONVERTOR) "$(>)" -size $(PNG_WIDTH)x$(PNG_HEIGHT) "$(<)"
+ }
+ 
+ NotFile icons ;
 diff --git a/data/menu/ede-applications.menu b/data/menu/ede-applications.menu
 index f94e333..0fbce00 100644
 --- a/data/menu/ede-applications.menu
