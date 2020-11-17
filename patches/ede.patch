@@ -1,24 +1,13 @@
 diff --git a/build/Svg.jam b/build/Svg.jam
-index f33b277..f9a50e7 100644
+index f33b277..97fdae2 100644
 --- a/build/Svg.jam
 +++ b/build/Svg.jam
-@@ -8,7 +8,8 @@
- # GNU General Public License version 2 or newer.
- # See COPYING for details.
- 
--SVG_CONVERTOR = "rsvg-convert" ;
-+# SVG_CONVERTOR = "rsvg-convert" ;
-+SVG_CONVERTOR = "convert" ;
- 
- # SvgToPng [target-png] : [source-svg] : [width] : [height] ;
- rule SvgToPng
-@@ -69,7 +70,8 @@ rule SvgToPngDirectory
+@@ -69,7 +69,7 @@ rule SvgToPngDirectory
  
  actions SvgToPng1
  {
 -	$(SVG_CONVERTOR) -w $(PNG_WIDTH) -h $(PNG_HEIGHT) -f png "$(>)" "$(<)"
-+    # $(SVG_CONVERTOR) -w $(PNG_WIDTH) -h $(PNG_HEIGHT) -f png "$(>)" "$(<)"
-+    $(SVG_CONVERTOR) "$(>)" -size $(PNG_WIDTH)x$(PNG_HEIGHT) "$(<)"
++    $(SVG_CONVERTOR) -w $(PNG_WIDTH) -h $(PNG_HEIGHT) -f png "$(>)" -o "$(<)"
  }
  
  NotFile icons ;
@@ -98,6 +87,63 @@ index 2f9ff8d..1b32201 100644
  
  # prefix for applications.menu
  if [ "x$XDG_MENU_PREFIX" = "x" ]; then
+diff --git a/ede-panel/applets/keyboard-layout/KeyLayout.cpp b/ede-panel/applets/keyboard-layout/KeyLayout.cpp
+index c68b8ca..be6f4c2 100644
+--- a/ede-panel/applets/keyboard-layout/KeyLayout.cpp
++++ b/ede-panel/applets/keyboard-layout/KeyLayout.cpp
+@@ -101,7 +101,8 @@ static void update_key_layout(KeyLayout *k) {
+  * another tool, so there are no needs to read layout from configuration file
+  */
+ static int xkb_events(int e) {
+-	if(fl_xevent->xproperty.atom == _XA_XKB_RF_NAMES_PROP_ATOM) {
++	if((fl_xevent->xproperty.atom == _XA_XKB_RF_NAMES_PROP_ATOM) ||
++	   (((XkbEvent*)fl_xevent)->any.xkb_type == XkbStateNotify)) {
+ 		/* TODO: lock this */
+ 		for_each(update_key_layout, keylayout_objects);
+ 	}
+@@ -144,6 +145,11 @@ KeyLayout::KeyLayout() : Fl_Button(0, 0, 30, 25) {
+ 
+ 	/* with this, kb layout chages will be catched */
+ #if HAVE_XKBRULES
++	XkbSelectEvents(fl_display,
++					XkbUseCoreKbd,
++					XkbAllEventsMask,
++					XkbAllEventsMask);
++
+ 	if(!_XA_XKB_RF_NAMES_PROP_ATOM)
+ 		_XA_XKB_RF_NAMES_PROP_ATOM = XInternAtom(fl_display, _XKB_RF_NAMES_PROP_ATOM, False);
+ #endif
+@@ -192,6 +198,9 @@ void KeyLayout::do_key_layout(void) {
+ 	char             *tmp = NULL;
+ 	XkbRF_VarDefsRec  vd;
+ 
++	XkbStateRec state;
++	XkbGetState(fl_display, XkbUseCoreKbd, &state);
++
+ 	if(XkbRF_GetNamesProp(fl_display, &tmp, &vd)) {
+ 		/* do nothing if layout do not exists or the same was catched */
+ 		if(!vd.layout || (curr_layout == vd.layout)) {
+@@ -200,7 +209,19 @@ void KeyLayout::do_key_layout(void) {
+ 		}
+ 
+ 		/* just store it, so update_flag() can do the rest */
+-		curr_layout = vd.layout;
++		char *tok = strtok(vd.layout, ",");
++
++		for (int i = 0; i < state.group; i++) {
++			tok = strtok(NULL, ",");
++			if (tok == NULL) {
++				break;
++			}
++		}
++
++		if (tok != NULL) {
++			curr_layout = tok;
++		}
++
+ 		xkbrf_names_prop_free(vd, tmp);
+ 	}
+ #endif
 diff --git a/ede-panel/applets/start-menu/XdgMenuReader.cpp b/ede-panel/applets/start-menu/XdgMenuReader.cpp
 index 1ee32ae..8a32a53 100644
 --- a/ede-panel/applets/start-menu/XdgMenuReader.cpp
