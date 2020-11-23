@@ -87,10 +87,613 @@ index 2f9ff8d..1b32201 100644
  
  # prefix for applications.menu
  if [ "x$XDG_MENU_PREFIX" = "x" ]; then
+diff --git a/ede-panel/Applet.h b/ede-panel/Applet.h
+index b70ad9e..c02f8b6 100644
+--- a/ede-panel/Applet.h
++++ b/ede-panel/Applet.h
+@@ -37,10 +37,9 @@ class Fl_Widget;
+  * and how it will be aligned. Each applet is by default aligned left without resizing ability.
+  */
+ enum {
+-	EDE_PANEL_APPLET_OPTION_RESIZABLE_H = (1 << 1),
+-	EDE_PANEL_APPLET_OPTION_RESIZABLE_V = (1 << 2),
+-	EDE_PANEL_APPLET_OPTION_ALIGN_LEFT  = (1 << 3),
+-	EDE_PANEL_APPLET_OPTION_ALIGN_RIGHT = (1 << 4)
++	EDE_PANEL_APPLET_OPTION_RESIZABLE  = (1 << 1),
++	EDE_PANEL_APPLET_OPTION_ALIGN_HEAD = (1 << 2),
++	EDE_PANEL_APPLET_OPTION_ALIGN_TAIL = (1 << 4)
+ };
+ 
+ /*
+@@ -73,7 +72,7 @@ struct AppletInfo {
+ };
+ 
+ /* module stuff */
+-typedef Fl_Widget*  (*applet_create_t)(void);
++typedef Fl_Widget*  (*applet_create_t)(bool horizontal);
+ typedef void        (*applet_destroy_t)(Fl_Widget *);
+ 
+ typedef AppletInfo* (*applet_get_info_t)(void);
+@@ -86,8 +85,8 @@ typedef float       (*applet_version_t)(void);
+  * so applet loader can use them to load applet class with some common metadata.
+  */
+ #define EDE_PANEL_APPLET_EXPORT(klass, aoptions, aname, aversion, aicon, aauthor) \
+-extern "C" Fl_Widget *ede_panel_applet_create(void) {                             \
+-    return new klass;                                                             \
++extern "C" Fl_Widget *ede_panel_applet_create(bool horizontal) {                  \
++    return new klass(horizontal);                                                 \
+ }                                                                                 \
+                                                                                   \
+ extern "C" void ede_panel_applet_destroy(Fl_Widget *w) {                          \
+diff --git a/ede-panel/AppletManager.cpp b/ede-panel/AppletManager.cpp
+index effcd06..af97423 100644
+--- a/ede-panel/AppletManager.cpp
++++ b/ede-panel/AppletManager.cpp
+@@ -149,7 +149,7 @@ void AppletManager::fill_group(Panel *p, PanelResource *res) {
+ 		applet = *it;
+ 
+ 		/* allocate memory for widget and append it to the group */
+-		applet->awidget = applet->create_func();
++		applet->awidget = applet->create_func(p->is_horizontal());
+ 
+ 		/* call configuration function if needed */
+ 		if(res && applet->awidget->type() == EDE_PANEL_APPLET_TYPE) {
+diff --git a/ede-panel/Panel.cpp b/ede-panel/Panel.cpp
+index 25796af..7976a9e 100644
+--- a/ede-panel/Panel.cpp
++++ b/ede-panel/Panel.cpp
+@@ -36,14 +36,14 @@
+ #include "Panel.h"
+ #include "Hider.h"
+ 
+-/* empty space from left and right panel border */
++/* empty space from head and tail panel border */
+ #define INITIAL_SPACING 5
+ 
+ /* space between each applet */
+ #define DEFAULT_SPACING 5
+ 
+ /* default panel height */
+-#define DEFAULT_PANEL_H 35
++#define DEFAULT_PANEL_SIZE 40
+ 
+ #define APPLET_EXTENSION ".so"
+ 
+@@ -125,15 +125,21 @@ static int x_events(int ev) {
+ }
+ 
+ /* horizontaly centers widget in the panel */
+-static void fix_widget_h(Fl_Widget *o, Panel *self) {
+-	int ph, wy, H = self->h() - 10;
+-
+-	ph = self->panel_h() / 2;
+-	wy = ph - (H / 2);
+-	o->resize(o->x(), wy, o->w(), H);
++static void fix_widget_size(Fl_Widget *o, Panel *self) {
++    if (self->is_horizontal()) {
++	    int ph, wy, H = self->h() - 10;
++        ph = self->panel_h() / 2;
++        wy = ph - (H / 2);
++        o->resize(o->x(), wy, o->w(), H);
++    } else {
++	    int pw, wx, W = self->w() - 10;
++        pw = self->panel_w() / 2;
++        wx = pw - (W / 2);
++        o->resize(wx, o->y(), W, o->h());
++    }
+ }
+ 
+-static void add_from_list(WidgetList &lst, Panel *self, int &X, bool inc) {
++static void add_from_list(WidgetList &lst, Panel *self, int &P, bool inc) {
+ 	WidgetListIt it = lst.begin(), ite = lst.end();
+ 	Fl_Widget    *o;
+ 
+@@ -142,18 +148,21 @@ static void add_from_list(WidgetList &lst, Panel *self, int &X, bool inc) {
+ 
+ 		/* 'inc == false' means we are going from right to left */
+ 		if(!inc)
+-			X -= o->w();
++			P -= (self->is_horizontal()) ? o->w() : o->h();
+ 
+ 		/* place it correctly */
+-		o->position(X, o->y());
++        if (self->is_horizontal())
++		    o->position(P, o->y());
++        else
++		    o->position(o->x(), P);
+ 
+ 		self->add(o);
+ 
+ 		if(inc) {
+-			X += DEFAULT_SPACING;
+-			X += o->w();
++			P += DEFAULT_SPACING;
++			P += (self->is_horizontal()) ? o->w() : o->h();
+ 		} else {
+-			X -= DEFAULT_SPACING;
++			P -= DEFAULT_SPACING;
+ 		}
+ 
+ 		it = lst.erase(it);
+@@ -227,9 +236,10 @@ Panel::Panel() : PanelWindow(300, 30, "ede-panel") {
+ 
+ 	clicked = 0; 
+ 	sx = sy = 0;
+-	vpos = PANEL_POSITION_BOTTOM;
++	pos = PANEL_POSITION_BOTTOM;
++    horizontal = ((pos == PANEL_POSITION_BOTTOM) || (pos == PANEL_POSITION_TOP));
+ 	screen_x = screen_y = screen_w = screen_h = screen_h_half = 0;
+-	width_perc = 100;
++	expand_perc = 100;
+ 	can_move_widgets = false;
+ 	can_drag = false;
+ 
+@@ -243,19 +253,24 @@ void Panel::read_config(void) {
+ 
+ 	int tmp;
+ 	if(r.get("Panel", "position", tmp, PANEL_POSITION_BOTTOM)) {
+-		if((tmp != PANEL_POSITION_TOP) && (tmp != PANEL_POSITION_BOTTOM))
++		if((tmp != PANEL_POSITION_TOP   ) &&
++           (tmp != PANEL_POSITION_BOTTOM) &&
++           (tmp != PANEL_POSITION_LEFT  ) &&
++           (tmp != PANEL_POSITION_RIGHT ))
+ 			tmp = PANEL_POSITION_BOTTOM;
+-		vpos = tmp;
++		pos = tmp;
++        horizontal = ((pos == PANEL_POSITION_BOTTOM) ||
++                      (pos == PANEL_POSITION_TOP));
+ 	}
+ 
+ 	if(r.get("Panel", "width", tmp, 100)) {
+ 		if(tmp > 100) tmp = 100;
+ 		else if(tmp < 10) tmp = 10;
+ 
+-		width_perc = tmp;
++		expand_perc = tmp;
+ 	}
+-	
+-	/* small button on the right edge for panel sliding */
++
++	/* small button on the tail edge for panel sliding */
+ 	r.get("Panel", "hider", tmp, 1);
+ 	if(tmp) {
+ 		if(!hider) {
+@@ -281,7 +296,7 @@ void Panel::save_config(void) {
+ 	/* use whatever was explicitly stored in configuration */
+ 	r.load("ede-panel");
+ 
+-	r.set("Panel", "position", vpos);
++	r.set("Panel", "position", pos);
+ 	r.save("ede-panel");
+ }
+ 
+@@ -291,19 +306,19 @@ void Panel::do_layout(void) {
+ 	Fl_Widget     *o;
+ 	unsigned long  opts;
+ 	unsigned int   lsz;
+-	int            X, W, free_w;
++	int            P, S, free_space;
+ 
+-	WidgetList left, right, center, unmanaged, resizable_h;
++	WidgetList head, tail, center, unmanaged, resizable;
+ 
+ 	for(int i = 0; i < children(); i++) {
+ 		o = child(i);
+ 
+-		/* first resize it to some reasonable height and center it vertically */
+-		fix_widget_h(o, this);
++        /* first resize it to some reasonable size and center it */
++        fix_widget_size(o, this);
+ 
+ 		/* manage hider specifically */
+ 		if(hider && o == hider) {
+-			right.push_back(o);
++			tail.push_back(o);
+ 			continue;
+ 		}
+ 
+@@ -314,18 +329,18 @@ void Panel::do_layout(void) {
+ 			continue;
+ 		}
+ 
+-		if(opts & EDE_PANEL_APPLET_OPTION_RESIZABLE_H)
+-			resizable_h.push_back(o);
++		if(opts & EDE_PANEL_APPLET_OPTION_RESIZABLE)
++			resizable.push_back(o);
+ 
+-		if(opts & EDE_PANEL_APPLET_OPTION_ALIGN_LEFT) {
++		if(opts & EDE_PANEL_APPLET_OPTION_ALIGN_HEAD) {
+ 			/* first item will be most leftest */
+-			left.push_back(o);
++			head.push_back(o);
+ 			continue;
+ 		}
+ 
+-		if(opts & EDE_PANEL_APPLET_OPTION_ALIGN_RIGHT) {
+-			/* first item will be most rightest */
+-			right.push_back(o);
++		if(opts & EDE_PANEL_APPLET_OPTION_ALIGN_TAIL) {
++			/* first item will be most tailest */
++			tail.push_back(o);
+ 			continue;
+ 		}
+ 
+@@ -334,56 +349,61 @@ void Panel::do_layout(void) {
+ 	}
+ 
+ 	/* make sure we at the end have all widgets, so we can overwrite group array */
+-	lsz = left.size() + center.size() + right.size() + unmanaged.size();
++	lsz = head.size() + center.size() + tail.size() + unmanaged.size();
+ 	E_ASSERT(lsz == (unsigned int)children() && "Size of layout lists size not equal to group size");
+ 
+-	X = INITIAL_SPACING;
++	P = INITIAL_SPACING;
+ 
+-	/* 
++	/*
+ 	 * Call add() on each element, processing lists in order. add() will remove element
+ 	 * in group array and put it at the end of array. At the end, we should have array ordered by
+ 	 * layout flags.
+ 	 */
+-	add_from_list(left, this, X, true);
+-	add_from_list(center, this, X, true);
+-	add_from_list(unmanaged, this, X, true);
++	add_from_list(head, this, P, true);
++	add_from_list(center, this, P, true);
++	add_from_list(unmanaged, this, P, true);
+ 
+-	free_w = X;
++	free_space = P;
+ 
+-	/* elements right will be put from starting from the right panel border */
+-	X = w() - INITIAL_SPACING;
+-	add_from_list(right, this, X, false);
++	/* elements tail will be put from starting from the tail panel border */
++	P = ((horizontal) ? w() : h()) - INITIAL_SPACING;
++	add_from_list(tail, this, P, false);
+ 
+ 	/* 
+ 	 * Code for horizontal streching. 
+ 	 *
+ 	 * FIXME: This code pretty sucks and need better rewrite in the future.
+ 	 * To work properly, applets that will be streched must be successive or everything will be
+-	 * messed up. Also, applets that are placed right2left does not work with it; they will be resized to right.
++	 * messed up. Also, applets that are placed tail2head does not work with it; they will be resized to tail.
+ 	 */
+-	if(resizable_h.empty())
++	if(resizable.empty())
+ 		return;
+ 
+-	/* calculate free space for horizontal alignement, per item in resizable_h list */
+-	free_w = (X - free_w) / resizable_h.size();
+-	if(!free_w) free_w = 0;
++	/* calculate free space for horizontal alignement, per item in resizable list */
++	free_space = (P - free_space) / resizable.size();
++	if(!free_space) free_space = 0;
+ 
+ 	/* 
+ 	 * since add_from_list() will already reserve some space by current child width and default spacing,
+ 	 * those values will be used again or holes will be made
+ 	 */
+-	WidgetListIt it = resizable_h.begin(), ite = resizable_h.end();
+-	o = resizable_h.front();
+-	X = o->x();
++	WidgetListIt it = resizable.begin(), ite = resizable.end();
++	o = resizable.front();
++	P = (horizontal) ? o->x() : o->y();
+ 
+ 	while(it != ite) {
+ 		o = *it;
+ 
+-		W = o->w() + free_w;
+-		o->resize(X, o->y(), W, o->h());
+-		X += W + DEFAULT_SPACING;
++        if (horizontal) {
++            S = o->w() + free_space;
++            o->resize(P, o->y(), S, o->h());
++        } else {
++            S = o->h() + free_space;
++            o->resize(o->x(), P, o->w(), S);
++        }
++		P += S + DEFAULT_SPACING;
+ 
+-		it = resizable_h.erase(it);
++		it = resizable.erase(it);
+ 	}
+ }
+ 
+@@ -395,7 +415,12 @@ void Panel::set_strut(short state) {
+ 	if(state == PANEL_STRUT_REMOVE) return;
+ 
+ 	int sizes[4] = {0, 0, 0, 0};
+-	sizes[state & PANEL_STRUT_BOTTOM ? 3 : 2] = h();
++
++    if (horizontal) {
++	    sizes[state & PANEL_STRUT_BOTTOM ? 3 : 2] = h();
++    } else {
++	    sizes[state & PANEL_STRUT_RIGHT ? 1 : 0] = w();
++    }
+ 
+ 	/* TODO: netwm_window_set_strut_partial() */
+ 	netwm_window_set_strut(fl_xid(this), sizes[0], sizes[1], sizes[2], sizes[3]);
+@@ -451,33 +476,50 @@ void Panel::update_size_and_pos(bool create_xid, bool update_strut, int X, int Y
+ 	screen_h_half = screen_h / 2;
+ 
+ 	/* calculate panel percentage width if given */
+-	if(width_perc < 100) {
+-		W = (width_perc * screen_w) / 100;
+-		X = (screen_w / 2) - (W / 2);
++	if(expand_perc < 100) {
++        if (horizontal) {
++            W = (expand_perc * screen_w) / 100;
++            X = (screen_w / 2) - (W / 2);
++        } else {
++            H = (expand_perc * screen_h) / 100;
++            Y = (screen_h / 2) - (H / 2);
++        }
+ 	}
+ 
+ 	/* set size as soon as possible, since do_layout() depends on it */
+-	size(W, DEFAULT_PANEL_H);
++    if (horizontal) {
++	    size(W, DEFAULT_PANEL_SIZE);
++    } else {
++	    size(DEFAULT_PANEL_SIZE, H);
++    }
+ 
+ 	do_layout();
+ 
+ 	if(create_xid) window_xid_create(this, make_me_dock);
+ 
+ 	/* position it, this is done after XID was created */
+-	if(vpos == PANEL_POSITION_BOTTOM) {
++	if(pos == PANEL_POSITION_BOTTOM) {
+ 		position(X, screen_h - h());
+-		if(width_perc >= 100 && update_strut)
++		if(expand_perc >= 100 && update_strut)
+ 			set_strut(PANEL_STRUT_REMOVE | PANEL_STRUT_BOTTOM);
+-	} else {
++	} else if(pos == PANEL_POSITION_TOP) {
+ 		/*
+ 		 * I'm not sure what the hell is going on here; if 'y == 0', X will
+ 		 * move panel few pixels down, even if FLTK is reporting y() == 0.
+ 		 * Seems like 1 will solve this.
+ 		 */
+ 		position(X, Y == 0 ? 1 : Y);
+-		if(width_perc >= 100 && update_strut)
++		if(expand_perc >= 100 && update_strut)
+ 			set_strut(PANEL_STRUT_REMOVE | PANEL_STRUT_TOP);
+-	}
++	} else if(pos == PANEL_POSITION_RIGHT) {
++		position(screen_w - w(), Y);
++		if(expand_perc >= 100 && update_strut)
++			set_strut(PANEL_STRUT_REMOVE | PANEL_STRUT_RIGHT);
++    } else {
++		position(0, Y == 0 ? 1 : Y);
++		if(expand_perc >= 100 && update_strut)
++			set_strut(PANEL_STRUT_REMOVE | PANEL_STRUT_LEFT);
++    }
+ }
+ 
+ int Panel::handle(int e) {
+@@ -511,16 +553,16 @@ int Panel::handle(int e) {
+ 				/* snap it to the top or bottom, depending on pressed mouse location */
+ 				if(Fl::event_y_root() <= screen_h_half && y() > screen_h_half) {
+ 					position(x(), screen_y);
+-					if(width_perc >= 100)
++					if(expand_perc >= 100)
+ 						set_strut(PANEL_STRUT_TOP);
+-					vpos = PANEL_POSITION_TOP;
++					pos = PANEL_POSITION_TOP;
+ 				} 
+ 
+ 				if(Fl::event_y_root() > screen_h_half && y() < screen_h_half) {
+ 					position(x(), screen_h - h());
+-					if(width_perc >= 100)
++					if(expand_perc >= 100)
+ 						set_strut(PANEL_STRUT_BOTTOM);
+-					vpos = PANEL_POSITION_BOTTOM;
++					pos = PANEL_POSITION_BOTTOM;
+ 				}
+ 
+ 				return 1;
+@@ -609,14 +651,18 @@ void Panel::load_applets(const char *applets, PanelResource *res) {
+ 
+ /* TODO: can be better */
+ void Panel::apply_struts(bool apply) {
+-	if(!(width_perc >= 100)) return;
++	if(!(expand_perc >= 100)) return;
+ 
+-	int bottom = 0, top = 0;
++	int bottom = 0, top = 0, left = 0, right = 0;
+ 
+-	if(vpos == PANEL_POSITION_TOP)
++	if(pos == PANEL_POSITION_TOP)
+ 		top = !apply ? 1 : h();
+-	else
++	else if(pos == PANEL_POSITION_BOTTOM)
+ 		bottom = !apply ? 1 : h();
++	else if(pos == PANEL_POSITION_LEFT)
++		left = !apply ? 1 : w();
++    else
++		right = !apply ? 1 : w();
+ 
+-	netwm_window_set_strut(fl_xid(this), 0, 0, top, bottom);
++	netwm_window_set_strut(fl_xid(this), left, right, top, bottom);
+ }
+diff --git a/ede-panel/Panel.h b/ede-panel/Panel.h
+index cf960b5..31b34d6 100644
+--- a/ede-panel/Panel.h
++++ b/ede-panel/Panel.h
+@@ -31,14 +31,18 @@ EDELIB_NS_USING_AS(Window, PanelWindow)
+ 
+ enum {
+ 	PANEL_POSITION_TOP,
+-	PANEL_POSITION_BOTTOM
++	PANEL_POSITION_BOTTOM,
++    PANEL_POSITION_LEFT,
++    PANEL_POSITION_RIGHT
+ };
+ 
+ /* combination of what to do with strut data */
+ enum {
+ 	PANEL_STRUT_REMOVE = (1 << 1),
+ 	PANEL_STRUT_BOTTOM = (1 << 2),
+-	PANEL_STRUT_TOP    = (1 << 3)
++	PANEL_STRUT_TOP    = (1 << 3),
++	PANEL_STRUT_LEFT   = (1 << 2),
++	PANEL_STRUT_RIGHT  = (1 << 3)
+ };
+ 
+ class Hider;
+@@ -48,11 +52,11 @@ private:
+ 	Fl_Widget *clicked;
+ 	Hider     *hider;
+ 
+-	int        vpos;
++	int        pos;
+ 	int        sx, sy;
+ 	int        screen_x, screen_y, screen_w, screen_h, screen_h_half;
+-	int        width_perc; /* user specified panel width */
+-	bool       can_move_widgets, can_drag;
++	int        expand_perc; /* user specified panel expansion */
++	bool       can_move_widgets, can_drag, horizontal;
+ 
+ 	AppletManager mgr;
+ 
+@@ -85,6 +89,7 @@ public:
+ 	void allow_drag(bool d) { can_drag = d; }
+ 
+ 	void relayout(void) { do_layout(); }
++    bool is_horizontal() { return horizontal; }
+ };
+ 
+ #endif
+diff --git a/ede-panel/applets/battery-monitor/BatteryMonitor.cpp b/ede-panel/applets/battery-monitor/BatteryMonitor.cpp
+index 1ad070c..9b2bf8b 100644
+--- a/ede-panel/applets/battery-monitor/BatteryMonitor.cpp
++++ b/ede-panel/applets/battery-monitor/BatteryMonitor.cpp
+@@ -80,7 +80,7 @@ private:
+ 	BatteryList     batts;
+ 
+ public:
+-	BatteryMonitor() : Fl_Box(0, 0, 30, 25), bimg(0) { 
++	BatteryMonitor(bool horizontal=true) : Fl_Box(0, 0, 30, 25), bimg(0) { 
+ 		box(FL_FLAT_BOX);
+ 		if(!scan_and_init()) {
+ 			set_icon(0, true);
+@@ -294,7 +294,7 @@ public:
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  BatteryMonitor, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_RIGHT,
++ EDE_PANEL_APPLET_OPTION_ALIGN_TAIL,
+  "Battery monitor",
+  "0.1",
+  "empty",
+diff --git a/ede-panel/applets/clock/Clock.cpp b/ede-panel/applets/clock/Clock.cpp
+index aaf9a81..c13afd4 100644
+--- a/ede-panel/applets/clock/Clock.cpp
++++ b/ede-panel/applets/clock/Clock.cpp
+@@ -18,8 +18,13 @@ private:
+ 
+ 	time_t     curr_time;
+ 	struct tm *curr_tm;
++    bool       _horizontal;
+ public:
+-	Clock() : Fl_Box(450, 0, 80, 25, NULL), hour(0) { 
++	Clock(bool horizontal=true)
++        : Fl_Box(450, 0, (horizontal) ? 80 : 45, (horizontal) ? 25 : 50, NULL), hour(0)
++        , _horizontal(horizontal) {
++	    if (horizontal)
++            labelsize(10);
+ 		box(FL_FLAT_BOX);
+ 	}
+ 
+@@ -43,7 +48,12 @@ void Clock::update_time(void) {
+ 	if(!curr_tm)
+ 		return;
+ 
+-	strftime(buf, sizeof(buf), "%H:%M:%S", curr_tm);
++    if (_horizontal) {
++    	strftime(buf, sizeof(buf), "%H:%M:%S", curr_tm);
++    } else {
++    	strftime(buf, sizeof(buf), "%H:%M\n%d/%m\n%Y", curr_tm);
++    }
++
+ 	label(buf);
+ 
+ 	/* update tooltip if needed */
+@@ -76,7 +86,7 @@ int Clock::handle(int e) {
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  Clock, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_RIGHT,
++ EDE_PANEL_APPLET_OPTION_ALIGN_TAIL,
+  "Clock applet",
+  "0.1",
+  "empty",
+diff --git a/ede-panel/applets/cpu-monitor/CpuMonitor.cpp b/ede-panel/applets/cpu-monitor/CpuMonitor.cpp
+index 61bf93e..464390c 100644
+--- a/ede-panel/applets/cpu-monitor/CpuMonitor.cpp
++++ b/ede-panel/applets/cpu-monitor/CpuMonitor.cpp
+@@ -137,7 +137,7 @@ void cpu_timeout_cb(void *d) {
+ 	Fl::repeat_timeout(UPDATE_INTERVAL, cpu_timeout_cb, d);
+ }
+ 
+-CPUMonitor::CPUMonitor() : Fl_Box(0, 0, 45, 25)
++CPUMonitor::CPUMonitor(bool horizontal) : Fl_Box(0, 0, 45, 25)
+ {
+ 	box(FL_THIN_DOWN_BOX);
+ 
+@@ -515,7 +515,7 @@ void CPUMonitor::get_cpu_info() {
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  CPUMonitor, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_RIGHT,
++ EDE_PANEL_APPLET_OPTION_ALIGN_TAIL,
+  "CPU monitor",
+  "0.1",
+  "empty",
+diff --git a/ede-panel/applets/cpu-monitor/CpuMonitor.h b/ede-panel/applets/cpu-monitor/CpuMonitor.h
+index 2f5b250..7d38bf8 100644
+--- a/ede-panel/applets/cpu-monitor/CpuMonitor.h
++++ b/ede-panel/applets/cpu-monitor/CpuMonitor.h
+@@ -30,7 +30,7 @@ private:
+     Fl_Color colors[IWM_STATES];
+ 
+ public:
+-    CPUMonitor();
++    CPUMonitor(bool horizontal=true);
+     ~CPUMonitor() { clear(); }
+ 
+     void clear();
+diff --git a/ede-panel/applets/demo/AppletDemo.cpp b/ede-panel/applets/demo/AppletDemo.cpp
+index a2e3692..4920ae9 100644
+--- a/ede-panel/applets/demo/AppletDemo.cpp
++++ b/ede-panel/applets/demo/AppletDemo.cpp
+@@ -6,7 +6,7 @@
+ 
+ class MyButton : public Fl_Button {
+ public:
+-	MyButton() : Fl_Button(0, 0, 90, 25, "xxx") { 
++	MyButton(bool horizontal=true) : Fl_Button(0, 0, 90, 25, "xxx") { 
+ 		color(FL_RED);
+ 		puts("MyButton::MyButton");
+ 	}
 diff --git a/ede-panel/applets/keyboard-layout/KeyLayout.cpp b/ede-panel/applets/keyboard-layout/KeyLayout.cpp
-index c68b8ca..be6f4c2 100644
+index c68b8ca..446ab5b 100644
 --- a/ede-panel/applets/keyboard-layout/KeyLayout.cpp
 +++ b/ede-panel/applets/keyboard-layout/KeyLayout.cpp
+@@ -69,7 +69,7 @@ private:
+ 	Fl_Image *img;
+ 
+ public:
+-	KeyLayout();
++	KeyLayout(bool horizontal=true);
+ 	~KeyLayout();
+ 	void update_flag(bool read_config);
+ 	void do_key_layout();
 @@ -101,7 +101,8 @@ static void update_key_layout(KeyLayout *k) {
   * another tool, so there are no needs to read layout from configuration file
   */
@@ -101,6 +704,15 @@ index c68b8ca..be6f4c2 100644
  		/* TODO: lock this */
  		for_each(update_key_layout, keylayout_objects);
  	}
+@@ -119,7 +120,7 @@ static void update_flag_cb(Fl_Window*, void *data) {
+ 	k->redraw();
+ }
+ 
+-KeyLayout::KeyLayout() : Fl_Button(0, 0, 30, 25) {
++KeyLayout::KeyLayout(bool horizontal) : Fl_Button(0, 0, 30, 25) {
+ 	should_show_flag = true;
+ 	curr_layout      = "us"; /* default layout */
+ 	img              = NULL;
 @@ -144,6 +145,11 @@ KeyLayout::KeyLayout() : Fl_Button(0, 0, 30, 25) {
  
  	/* with this, kb layout chages will be catched */
@@ -144,6 +756,194 @@ index c68b8ca..be6f4c2 100644
  		xkbrf_names_prop_free(vd, tmp);
  	}
  #endif
+@@ -225,7 +246,7 @@ int KeyLayout::handle(int e) {
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  KeyLayout, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_RIGHT,
++ EDE_PANEL_APPLET_OPTION_ALIGN_TAIL,
+  "Keyboard Layout applet",
+  "0.1",
+  "empty",
+diff --git a/ede-panel/applets/mem-monitor/MemMonitor.cpp b/ede-panel/applets/mem-monitor/MemMonitor.cpp
+index e3477ad..41f2cb9 100644
+--- a/ede-panel/applets/mem-monitor/MemMonitor.cpp
++++ b/ede-panel/applets/mem-monitor/MemMonitor.cpp
+@@ -40,7 +40,7 @@ class MemMonitor : public Fl_Box {
+ private:
+ 	int mem_usedp, swap_usedp;
+ public:
+-	MemMonitor() : Fl_Box(0, 0, 45, 25), mem_usedp(0), swap_usedp(0) {
++	MemMonitor(bool horizontal=true) : Fl_Box(0, 0, 45, 25), mem_usedp(0), swap_usedp(0) {
+ 		box(FL_THIN_DOWN_BOX);
+ 		update_status();
+ 	}
+@@ -127,7 +127,7 @@ public:
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  MemMonitor, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_RIGHT,
++ EDE_PANEL_APPLET_OPTION_ALIGN_TAIL,
+  "Memory monitor",
+  "0.2",
+  "empty",
+diff --git a/ede-panel/applets/pager/Pager.cpp b/ede-panel/applets/pager/Pager.cpp
+index bc543ad..6e7a193 100644
+--- a/ede-panel/applets/pager/Pager.cpp
++++ b/ede-panel/applets/pager/Pager.cpp
+@@ -20,10 +20,12 @@ EDELIB_NS_USING(NETWM_CHANGED_CURRENT_WORKSPACE)
+ 
+ class Pager : public Fl_Group {
+ public:
+-	Pager();
++	Pager(bool horizontal=true);
+ 	~Pager();
+ 	void init_workspace_boxes(void);
+ 	void workspace_changed(void);
++private:
++    bool _horizontal;
+ };
+ 
+ static void box_cb(PagerButton *pb, void *p) {
+@@ -41,7 +43,9 @@ static void net_event_cb(int action, Window xid, void *data) {
+ 	}
+ }
+ 
+-Pager::Pager() : Fl_Group(0, 0, 25, 25, NULL) { 
++Pager::Pager(bool horizontal)
++    : Fl_Group(0, 0, 45, 45, NULL)
++    , _horizontal(horizontal) { 
+ 	box(FL_DOWN_BOX);
+ 	/* we will explicitly add elements */
+ 	end();
+@@ -55,12 +59,13 @@ Pager::~Pager() {
+ }
+ 
+ void Pager::init_workspace_boxes(void) {
+-	int X, Y, H;
++	int X, Y, W, H;
+ 
+ 	/* prepare the sizes */
+ 	X = x() + Fl::box_dx(box());
+ 	Y = y() + Fl::box_dy(box());
+ 	H = h() - Fl::box_dh(box());
++	W = w() - Fl::box_dw(box());
+ 
+ 	int  nworkspaces, curr_workspace;
+ 	char **names = 0;
+@@ -73,16 +78,23 @@ void Pager::init_workspace_boxes(void) {
+ 	 * Resize group before childs, or they will be resized too, messing things up.
+ 	 * Here, each child is 25px wide plus 1px for delimiter between the childs .
+ 	 */
+-	int gw = nworkspaces * (25 + 1);
+-	gw += Fl::box_dw(box());
++	int gs = nworkspaces * (25 + 1);
++
++	gs += (_horizontal) ? Fl::box_dw(box()) : Fl::box_dh(box());
+ 	/* last child do not ends with 1px wide delimiter */
+-	gw -= 1;
++	gs -= 1;
+ 
+-	size(gw, h());
++    if (_horizontal) {
++        W = 25;
++	    size(gs, h());
++    } else {
++        H = 25;
++	    size(w(), gs);
++    }
+ 
+ 	for(int i = 0; i < nworkspaces; i++) {
+ 		/* let box width be fixed */
+-		PagerButton *bx = new PagerButton(X, Y, 25, H);
++		PagerButton *bx = new PagerButton(X, Y, W, H);
+ 		bx->box(FL_FLAT_BOX);
+ 
+ 		if(i == curr_workspace)
+@@ -100,7 +112,11 @@ void Pager::init_workspace_boxes(void) {
+ 
+ 		add(bx);
+ 		/* position for the next box */
+-		X = bx->x() + bx->w() + 1;
++        if (_horizontal) {
++		    X = bx->x() + bx->w() + 1;
++        } else {
++		    Y = bx->y() + bx->h() + 1;
++        }
+ 	}
+ 
+ 	netwm_workspace_free_names(names);
+@@ -123,7 +139,7 @@ void Pager::workspace_changed(void) {
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  Pager, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_LEFT,
++ EDE_PANEL_APPLET_OPTION_ALIGN_HEAD,
+  "Desktop switcher",
+  "0.1",
+  "empty",
+diff --git a/ede-panel/applets/quick-launch/QuickLaunch.cpp b/ede-panel/applets/quick-launch/QuickLaunch.cpp
+index c2c712b..3e2db0d 100644
+--- a/ede-panel/applets/quick-launch/QuickLaunch.cpp
++++ b/ede-panel/applets/quick-launch/QuickLaunch.cpp
+@@ -39,7 +39,7 @@ private:
+ 	Fl_Image *img;
+ 	int img_x, img_y;
+ public:
+-	QuickLaunch();
++	QuickLaunch(bool horizontal=true);
+ 
+ 	void draw(void);
+ 	int  handle(int e);
+@@ -65,7 +65,7 @@ static void enter_cb(Fl_Widget*, void *o) {
+ 		run_async("ede-launch %s", ql->value());
+ }
+ 
+-QuickLaunch::QuickLaunch() : Fl_Input(0, 0, 130, 25), img(NULL), img_x(0), img_y(0) {
++QuickLaunch::QuickLaunch(bool horizontal) : Fl_Input(0, 0, 130, 25), img(NULL), img_x(0), img_y(0) {
+ 	when(FL_WHEN_ENTER_KEY|FL_WHEN_NOT_CHANGED);
+ 	callback(enter_cb, this);
+ 	tooltip(_("Enter a command to be executed"));
+@@ -129,7 +129,7 @@ done:
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  QuickLaunch, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_LEFT,
++ EDE_PANEL_APPLET_OPTION_ALIGN_HEAD,
+  "Quick Launch applet",
+  "0.1",
+  "empty",
+diff --git a/ede-panel/applets/start-menu/StartMenu.cpp b/ede-panel/applets/start-menu/StartMenu.cpp
+index 8fbf26f..34fd65c 100644
+--- a/ede-panel/applets/start-menu/StartMenu.cpp
++++ b/ede-panel/applets/start-menu/StartMenu.cpp
+@@ -60,7 +60,7 @@ private:
+ 
+ 	void setup_menu(XdgMenuContent *m);
+ public:
+-	StartMenu();
++	StartMenu(bool horizontal=true);
+ 	~StartMenu();
+ 
+ 	void popup(void);
+@@ -94,7 +94,7 @@ static void folder_changed_cb(const char *dir, const char *w, int flags, void *d
+ }
+ #endif
+ 
+-StartMenu::StartMenu() : MenuBase(0, 0, 80, 25, "EDE"), mcontent(NULL), mcontent_pending(NULL), last_reload(0), menu_opened(false) {
++StartMenu::StartMenu(bool horizontal) : MenuBase(0, 0, 80, 25, "EDE"), mcontent(NULL), mcontent_pending(NULL), last_reload(0), menu_opened(false) {
+ 	down_box(FL_NO_BOX);
+ 	labelfont(FL_HELVETICA_BOLD);
+ 	labelsize(14);
+@@ -310,7 +310,7 @@ void StartMenu::reload_menu(void) {
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  StartMenu, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_LEFT,
++ EDE_PANEL_APPLET_OPTION_ALIGN_HEAD,
+  "Main menu",
+  "0.2",
+  "empty",
 diff --git a/ede-panel/applets/start-menu/XdgMenuReader.cpp b/ede-panel/applets/start-menu/XdgMenuReader.cpp
 index 1ee32ae..8a32a53 100644
 --- a/ede-panel/applets/start-menu/XdgMenuReader.cpp
@@ -252,3 +1052,73 @@ index 1ee32ae..8a32a53 100644
  		if(ELEMENT_IS(elem, "Include")) {
  			scan_include_exclude_tag(elem, ctx->include_rules);
  			continue;
+diff --git a/ede-panel/applets/system-tray/Tray.cpp b/ede-panel/applets/system-tray/Tray.cpp
+index f80ebf6..7b05821 100644
+--- a/ede-panel/applets/system-tray/Tray.cpp
++++ b/ede-panel/applets/system-tray/Tray.cpp
+@@ -67,7 +67,7 @@ static int validate_drawable(Display *d, Window xid) {
+ 	return st;
+ }
+ 
+-Tray::Tray() : Fl_Group(0, 0, 1, 25), opcode(0) {
++Tray::Tray(bool horizontal) : Fl_Group(0, 0, 1, 25), opcode(0) {
+ 	box(FL_FLAT_BOX);
+ 	register_notification_area();
+ }
+@@ -239,7 +239,7 @@ int Tray::handle(int e) {
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  Tray, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_RIGHT,
++ EDE_PANEL_APPLET_OPTION_ALIGN_TAIL,
+  "System Tray",
+  "0.1",
+  "empty",
+diff --git a/ede-panel/applets/system-tray/Tray.h b/ede-panel/applets/system-tray/Tray.h
+index 677e770..7bd5c56 100644
+--- a/ede-panel/applets/system-tray/Tray.h
++++ b/ede-panel/applets/system-tray/Tray.h
+@@ -22,7 +22,7 @@ private:
+ 	WinList win_list;
+ 	void distribute_children(void);
+ public:
+-	Tray();
++	Tray(bool horizontal=true);
+ 	~Tray();
+ 	void register_notification_area(void);
+ 	Atom get_opcode(void) const { return opcode; }
+diff --git a/ede-panel/applets/taskbar/Taskbar.cpp b/ede-panel/applets/taskbar/Taskbar.cpp
+index 29d01dd..c4c00fa 100644
+--- a/ede-panel/applets/taskbar/Taskbar.cpp
++++ b/ede-panel/applets/taskbar/Taskbar.cpp
+@@ -100,7 +100,7 @@ static void net_event_cb(int action, Window xid, void *data) {
+ 	}
+ }
+ 
+-Taskbar::Taskbar() : WidgetGroup(0, 0, 40, 25), curr_active(NULL), prev_active(NULL) {
++Taskbar::Taskbar(bool horizontal) : WidgetGroup(0, 0, 40, 25), curr_active(NULL), prev_active(NULL) {
+ 	end();
+ 	fixed_layout = false;
+ 	ignore_workspace_value = false;
+@@ -438,7 +438,7 @@ void Taskbar::try_dnd(TaskButton *b, int xpos, int ypos) {
+ 
+ EDE_PANEL_APPLET_EXPORT (
+  Taskbar, 
+- EDE_PANEL_APPLET_OPTION_ALIGN_LEFT | EDE_PANEL_APPLET_OPTION_RESIZABLE_H,
++ EDE_PANEL_APPLET_OPTION_ALIGN_HEAD | EDE_PANEL_APPLET_OPTION_RESIZABLE,
+  "Taskbar",
+  "0.1",
+  "empty",
+diff --git a/ede-panel/applets/taskbar/Taskbar.h b/ede-panel/applets/taskbar/Taskbar.h
+index 0ba2f8e..0308631 100644
+--- a/ede-panel/applets/taskbar/Taskbar.h
++++ b/ede-panel/applets/taskbar/Taskbar.h
+@@ -45,7 +45,7 @@ public:
+ 	}
+ 
+ public:
+-	Taskbar();
++	Taskbar(bool horizontal=true);
+ 	~Taskbar();
+ 	
+ 	void configure(Resource *res);
