@@ -914,10 +914,14 @@ index c2c712b..3e2db0d 100644
   "0.1",
   "empty",
 diff --git a/ede-panel/applets/start-menu/StartMenu.cpp b/ede-panel/applets/start-menu/StartMenu.cpp
-index 8fbf26f..34fd65c 100644
+index 8fbf26f..6b26fac 100644
 --- a/ede-panel/applets/start-menu/StartMenu.cpp
 +++ b/ede-panel/applets/start-menu/StartMenu.cpp
-@@ -60,7 +60,7 @@ private:
+@@ -57,10 +57,11 @@ private:
+ 
+ 	time_t   last_reload;
+ 	bool     menu_opened;
++    bool     horizontal_;
  
  	void setup_menu(XdgMenuContent *m);
  public:
@@ -926,16 +930,43 @@ index 8fbf26f..34fd65c 100644
  	~StartMenu();
  
  	void popup(void);
-@@ -94,7 +94,7 @@ static void folder_changed_cb(const char *dir, const char *w, int flags, void *d
+@@ -94,7 +95,8 @@ static void folder_changed_cb(const char *dir, const char *w, int flags, void *d
  }
  #endif
  
 -StartMenu::StartMenu() : MenuBase(0, 0, 80, 25, "EDE"), mcontent(NULL), mcontent_pending(NULL), last_reload(0), menu_opened(false) {
-+StartMenu::StartMenu(bool horizontal) : MenuBase(0, 0, 80, 25, "EDE"), mcontent(NULL), mcontent_pending(NULL), last_reload(0), menu_opened(false) {
++StartMenu::StartMenu(bool horizontal) : MenuBase(0, 0, 80, 25, (horizontal_) ? "EDE" : NULL), mcontent(NULL), mcontent_pending(NULL), last_reload(0), menu_opened(false), horizontal_(horizontal) {
++	box(FL_FLAT_BOX);
  	down_box(FL_NO_BOX);
  	labelfont(FL_HELVETICA_BOLD);
  	labelsize(14);
-@@ -310,7 +310,7 @@ void StartMenu::reload_menu(void) {
+@@ -189,10 +191,13 @@ void StartMenu::popup(void) {
+ 	Fl::watch_widget_pointer(mb);
+ #endif
+ 
+-	if(!box() || type())
++	if(!box() || type()) {
+ 		m = menu()->popup(Fl::event_x(), Fl::event_y(), label(), mvalue(), this);
+-	else
+-		m = menu()->pulldown(x(), y(), w(), h(), 0, this);
++    } else if (horizontal_) {
++	    m = menu()->pulldown(x(), y(), w(), h(), 0, this);
++    } else {
++	    m = menu()->pulldown(parent()->x()+parent()->w(), 0, w(), 0, 0, this);
++    }
+ 
+ 	picked(m);
+ 	pressed_menu_button = 0;
+@@ -224,6 +229,8 @@ int StartMenu::handle(int e) {
+ 	switch(e) {
+ 		case FL_ENTER:
+ 		case FL_LEAVE:
++			box((e==FL_ENTER) ? FL_THIN_UP_BOX : FL_FLAT_BOX);
++			redraw();
+ 			return (box() && !type()) ? 1 : 0;
+ 		case FL_PUSH:
+ 			if(!box()) {
+@@ -310,7 +317,7 @@ void StartMenu::reload_menu(void) {
  
  EDE_PANEL_APPLET_EXPORT (
   StartMenu, 
@@ -1088,35 +1119,71 @@ index 677e770..7bd5c56 100644
  	void register_notification_area(void);
  	Atom get_opcode(void) const { return opcode; }
 diff --git a/ede-panel/applets/taskbar/TaskButton.cpp b/ede-panel/applets/taskbar/TaskButton.cpp
-index 7d28319..6cd5d55 100644
+index 7d28319..2ea95e2 100644
 --- a/ede-panel/applets/taskbar/TaskButton.cpp
 +++ b/ede-panel/applets/taskbar/TaskButton.cpp
-@@ -106,7 +106,8 @@ static void maximize_cb(Fl_Widget*, void *b) {
+@@ -104,9 +104,12 @@ static void maximize_cb(Fl_Widget*, void *b) {
+ }
+ 
  TaskButton::TaskButton(int X, int Y, int W, int H, const char *l) : Fl_Button(X, Y, W, H, l),
- 																	xid(0), wspace(0), old_value(0), image_alloc(false), dragged(false), net_wm_icon(0)
+-																	xid(0), wspace(0), old_value(0), image_alloc(false), dragged(false), net_wm_icon(0)
++																	xid(0), wspace(0), old_value(0), image_alloc(false), dragged(false), net_wm_icon(0), active_(0)
  { 
 -	box(FL_UP_BOX);
 +	box(FL_FLAT_BOX);
 +	down_box(FL_THIN_DOWN_BOX);
++	selection_color(FL_SELECTION_COLOR);
++    color(FL_BACKGROUND_COLOR);
  
  	align(FL_ALIGN_INSIDE | FL_ALIGN_LEFT | FL_ALIGN_CLIP);
  
-@@ -230,6 +231,14 @@ void TaskButton::update_image_from_xid(void) {
+@@ -132,8 +135,10 @@ void TaskButton::clear_image(void) {
+ }	
+ 
+ void TaskButton::draw(void) {
+-	Fl_Color col = value() ? selection_color() : color();
+-	draw_box(value() ? (down_box() ? down_box() : fl_down(box())) : box(), col);
++	Fl_Color col = active() ? selection_color() : color();
++    Fl_Boxtype box_to_draw = active() ? (down_box() ? down_box() : fl_down(box())) : box();
++
++	draw_box(box_to_draw, col);
+ 
+ 	if(image()) {
+ 		int X, Y, lw, lh;
+@@ -230,12 +235,24 @@ void TaskButton::update_image_from_xid(void) {
  
  int TaskButton::handle(int e) {
  	switch(e) {
 +		case FL_ENTER:
-+			box(FL_THIN_UP_BOX);
++			// box(FL_THIN_UP_BOX);
++            selection_color(FL_BACKGROUND2_COLOR);
++            color(FL_BACKGROUND2_COLOR);
 +			redraw();
 +			break;
 +		case FL_LEAVE:
-+			box(FL_FLAT_BOX);
++            selection_color(FL_SELECTION_COLOR);
++            color(FL_BACKGROUND_COLOR);
++			// box(active() ? FL_THIN_DOWN_BOX : FL_FLAT_BOX);
 +			redraw();
 +			break;
  		case FL_PUSH:
  			/*
- 			 * Remember old value, as value() result affect will box be drawn as FL_UP_BOX or FL_DOWN_BOX.
-@@ -251,6 +260,6 @@ int TaskButton::handle(int e) {
+-			 * Remember old value, as value() result affect will box be drawn as FL_UP_BOX or FL_DOWN_BOX.
++			 * Remember old active, as active() result affect will box be drawn as FL_UP_BOX or FL_DOWN_BOX.
+ 			 * This trick should return box to the old state in case of dragging.
+ 			 */
+-			old_value = value();
++			old_value = active();
+ 			return Fl_Button::handle(e);
+ 		case FL_DRAG:
+ 			dragged = true;
+@@ -246,11 +263,11 @@ int TaskButton::handle(int e) {
+ 				taskbar->try_dnd(this, Fl::event_x(), Fl::event_y());
+ 				dragged = false;
+ 
+-				value(old_value);
++				active(old_value);
+ 				return 1;
  			}
  			/* fallthrough */
  	}
@@ -1124,8 +1191,30 @@ index 7d28319..6cd5d55 100644
 +
  	return Fl_Button::handle(e);
  }
+diff --git a/ede-panel/applets/taskbar/TaskButton.h b/ede-panel/applets/taskbar/TaskButton.h
+index db9d8a1..a701801 100644
+--- a/ede-panel/applets/taskbar/TaskButton.h
++++ b/ede-panel/applets/taskbar/TaskButton.h
+@@ -33,6 +33,7 @@ private:
+ 	bool   image_alloc;    
+ 	bool   dragged;
+ 	Atom   net_wm_icon;
++    bool   active_;
+ 
+ 	void clear_image(void);
+ public:
+@@ -52,6 +53,9 @@ public:
+ 	int  get_workspace(void) { return wspace; }
+ 	
+ 	int handle(int e);
++
++    void active(bool _active) { active_ = _active; }
++    bool active() { return active_; }
+ };
+ 
+ #endif
 diff --git a/ede-panel/applets/taskbar/Taskbar.cpp b/ede-panel/applets/taskbar/Taskbar.cpp
-index 29d01dd..d74e58b 100644
+index 29d01dd..efc6d21 100644
 --- a/ede-panel/applets/taskbar/Taskbar.cpp
 +++ b/ede-panel/applets/taskbar/Taskbar.cpp
 @@ -27,6 +27,7 @@
@@ -1238,7 +1327,23 @@ index 29d01dd..d74e58b 100644
  	}
  }
  
-@@ -438,7 +462,7 @@ void Taskbar::try_dnd(TaskButton *b, int xpos, int ypos) {
+@@ -299,11 +323,12 @@ void Taskbar::update_active_button(bool do_redraw, int xid) {
+ 		if(!o->visible()) continue;
+ 
+ 		if(o->get_window_xid() == (Window)xid) {
+-			o->box(FL_DOWN_BOX);
++			// o->box(FL_THIN_DOWN_BOX);
+ 			curr_active = o;
+-		} else {
+-			o->box(FL_UP_BOX);
++		// } else {
++			// o->box(FL_FLAT_BOX);
+ 		}
++		o->active(o == curr_active);
+ 	}
+ 
+ 	if(do_redraw) redraw();
+@@ -438,7 +463,7 @@ void Taskbar::try_dnd(TaskButton *b, int xpos, int ypos) {
  
  EDE_PANEL_APPLET_EXPORT (
   Taskbar, 
