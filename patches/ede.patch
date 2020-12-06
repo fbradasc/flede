@@ -1087,20 +1087,158 @@ index 677e770..7bd5c56 100644
  	~Tray();
  	void register_notification_area(void);
  	Atom get_opcode(void) const { return opcode; }
+diff --git a/ede-panel/applets/taskbar/TaskButton.cpp b/ede-panel/applets/taskbar/TaskButton.cpp
+index 7d28319..6cd5d55 100644
+--- a/ede-panel/applets/taskbar/TaskButton.cpp
++++ b/ede-panel/applets/taskbar/TaskButton.cpp
+@@ -106,7 +106,8 @@ static void maximize_cb(Fl_Widget*, void *b) {
+ TaskButton::TaskButton(int X, int Y, int W, int H, const char *l) : Fl_Button(X, Y, W, H, l),
+ 																	xid(0), wspace(0), old_value(0), image_alloc(false), dragged(false), net_wm_icon(0)
+ { 
+-	box(FL_UP_BOX);
++	box(FL_FLAT_BOX);
++	down_box(FL_THIN_DOWN_BOX);
+ 
+ 	align(FL_ALIGN_INSIDE | FL_ALIGN_LEFT | FL_ALIGN_CLIP);
+ 
+@@ -230,6 +231,14 @@ void TaskButton::update_image_from_xid(void) {
+ 
+ int TaskButton::handle(int e) {
+ 	switch(e) {
++		case FL_ENTER:
++			box(FL_THIN_UP_BOX);
++			redraw();
++			break;
++		case FL_LEAVE:
++			box(FL_FLAT_BOX);
++			redraw();
++			break;
+ 		case FL_PUSH:
+ 			/*
+ 			 * Remember old value, as value() result affect will box be drawn as FL_UP_BOX or FL_DOWN_BOX.
+@@ -251,6 +260,6 @@ int TaskButton::handle(int e) {
+ 			}
+ 			/* fallthrough */
+ 	}
+-	
++
+ 	return Fl_Button::handle(e);
+ }
 diff --git a/ede-panel/applets/taskbar/Taskbar.cpp b/ede-panel/applets/taskbar/Taskbar.cpp
-index 29d01dd..c4c00fa 100644
+index 29d01dd..d74e58b 100644
 --- a/ede-panel/applets/taskbar/Taskbar.cpp
 +++ b/ede-panel/applets/taskbar/Taskbar.cpp
-@@ -100,7 +100,7 @@ static void net_event_cb(int action, Window xid, void *data) {
+@@ -27,6 +27,7 @@
+ #include "Taskbar.h"
+ 
+ #define DEFAULT_CHILD_W 175
++#define DEFAULT_CHILD_H 40
+ #define DEFAULT_SPACING 5
+ 
+ EDELIB_NS_USING(netwm_callback_add)
+@@ -100,9 +101,10 @@ static void net_event_cb(int action, Window xid, void *data) {
  	}
  }
  
 -Taskbar::Taskbar() : WidgetGroup(0, 0, 40, 25), curr_active(NULL), prev_active(NULL) {
-+Taskbar::Taskbar(bool horizontal) : WidgetGroup(0, 0, 40, 25), curr_active(NULL), prev_active(NULL) {
++Taskbar::Taskbar(bool horizontal) : WidgetGroup(0, 0, 40, (horizontal) ? 25 : 40), curr_active(NULL), prev_active(NULL),
++                                    horizontal_(horizontal) {
  	end();
- 	fixed_layout = false;
+-	fixed_layout = false;
++	fixed_layout = !horizontal_;
  	ignore_workspace_value = false;
-@@ -438,7 +438,7 @@ void Taskbar::try_dnd(TaskButton *b, int xpos, int ypos) {
+ 
+ 	current_workspace = netwm_workspace_get_current();
+@@ -118,7 +120,11 @@ Taskbar::~Taskbar() {
+ void Taskbar::configure(Resource *res) {
+ 	E_RETURN_IF_FAIL(res != NULL);
+ 	
+-	res->get("Taskbar", "fixed_layout", fixed_layout, false);
++    if (horizontal_) {
++	    res->get("Taskbar", "fixed_layout", fixed_layout, false);
++    } else {
++        fixed_layout = true;
++    }
+ 	res->get("Taskbar", "all_desktops", ignore_workspace_value, false);
+ 
+ 	if(visible()) update_task_buttons();
+@@ -193,7 +199,7 @@ void Taskbar::update_task_buttons(void) {
+ 		/* create button */
+ 		ws = netwm_window_get_workspace(wins[i]);
+ 		
+-		b = new TaskButton(0, 0, DEFAULT_CHILD_W, 25);
++		b = new TaskButton(0, 0, (horizontal_) ? DEFAULT_CHILD_W : DEFAULT_CHILD_H, (horizontal_) ? 25 : DEFAULT_CHILD_H);
+ 		b->set_window_xid(wins[i]);
+ 		b->update_title_from_xid();
+ 		b->update_image_from_xid();
+@@ -244,12 +250,20 @@ void Taskbar::layout_children(void) {
+ 	if(!children()) return;
+ 
+ 	Fl_Widget *o;
+-	int X, Y, W, child_h, reduce = 0, sz = 0, all_buttons_w = 0;
++	int X, Y, W, H, S, child_s, reduce = 0, sz = 0, all_buttons_s = 0;
+ 
+ 	X = x() + Fl::box_dx(box());
+ 	Y = y() + Fl::box_dy(box());
+ 	W = w() - Fl::box_dw(box());
+-	child_h = parent()->h() - 10; /* same sizes as in panel */
++	H = h() - Fl::box_dw(box());
++
++    if (horizontal_) {
++	    child_s = parent()->h() - 10; /* same sizes as in panel */
++        S = W;
++    } else {
++	    child_s = parent()->w() - 10; /* same sizes as in panel */
++        S = H;
++    }
+ 
+ 	for(int i = 0; i < children(); i++) {
+ 		o = child(i);
+@@ -258,17 +272,22 @@ void Taskbar::layout_children(void) {
+ 		sz++;
+ 
+ 		/* resize every child to default size so we can calculate total length */
+-		o->resize(o->x(), o->y(), (fixed_layout ? DEFAULT_CHILD_W : W), child_h);
+-		all_buttons_w += o->w();
++        if (horizontal_) {
++		    o->resize(o->x(), o->y(), (fixed_layout ? DEFAULT_CHILD_W : W), child_s);
++		    all_buttons_s += o->w();
++        } else {
++		    o->resize(o->x(), o->y(), child_s, (fixed_layout ? ( (horizontal_) ? DEFAULT_CHILD_H : child_s ) : H));
++		    all_buttons_s += o->h();
++        }
+ 
+ 		/* do not include ending spaces */
+ 		if(i != children() - 1)
+-			all_buttons_w += DEFAULT_SPACING;
++			all_buttons_s += DEFAULT_SPACING;
+ 	}
+ 
+ 	/* find reduction size */
+-	if(all_buttons_w > W)
+-		reduce = (all_buttons_w - W) / sz;
++	if(all_buttons_s > S)
++		reduce = (all_buttons_s - S) / sz;
+ 
+ 	/* now, position each child and resize it if needed */
+ 	for(int i = 0; i < children(); i++) {
+@@ -279,8 +298,13 @@ void Taskbar::layout_children(void) {
+ 		 * I'm putting -1 here to leave a small space at the end of group; this will also
+ 		 * make children adaptive to not overflow group in case too many of them was created
+ 		 */
+-		o->resize(X, Y, o->w() - reduce - 1, child_h);
+-		X += o->w() + DEFAULT_SPACING;
++        if (horizontal_) {
++            o->resize(X, Y, o->w() - reduce - 1, child_s);
++            X += o->w() + DEFAULT_SPACING;
++        } else {
++            o->resize(X, Y, child_s, o->h() - reduce - 1);
++            Y += o->h() + DEFAULT_SPACING;
++        }
+ 	}
+ }
+ 
+@@ -438,7 +462,7 @@ void Taskbar::try_dnd(TaskButton *b, int xpos, int ypos) {
  
  EDE_PANEL_APPLET_EXPORT (
   Taskbar, 
@@ -1110,10 +1248,17 @@ index 29d01dd..c4c00fa 100644
   "0.1",
   "empty",
 diff --git a/ede-panel/applets/taskbar/Taskbar.h b/ede-panel/applets/taskbar/Taskbar.h
-index 0ba2f8e..0308631 100644
+index 0ba2f8e..1cda994 100644
 --- a/ede-panel/applets/taskbar/Taskbar.h
 +++ b/ede-panel/applets/taskbar/Taskbar.h
-@@ -45,7 +45,7 @@ public:
+@@ -39,13 +39,14 @@ public:
+ 	bool fixed_layout;           /* fixed or streched layout of buttons */
+ 	bool ignore_workspace_value; /* should all windows be shown ignoring workspace value */
+ 	int  current_workspace;
++    bool horizontal_;
+ 
+ 	bool visible_on_current_workspace(int ws) {
+ 		return (ignore_workspace_value == true) || (ws == ALL_WORKSPACES) || (ws == current_workspace);
  	}
  
  public:
